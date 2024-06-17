@@ -29,7 +29,6 @@ class AppsFlyerConnect:
             token = f.readline()
         self.headers = {"accept": "text/csv",
                         "authorization": token}
-        self.base_url = 'https://hq1.appsflyer.com/api/raw-data/export/app/'
         self.timezone = 'Europe%2FMoscow'
         self.additional_fields = ('blocked_reason_rule,store_reinstall,impressions,contributor3_match_type,custom_dimension,'
                                 'conversion_type,gp_click_time,match_type,mediation_network,oaid,deeplink_url,'
@@ -41,6 +40,7 @@ class AppsFlyerConnect:
                                 'install_app_store,amazon_aid,att')
 
     def get_events(self, app_id, start_date, end_date, flag='installs', events=None, dtype:list=None):
+        self.base_url = 'https://hq1.appsflyer.com/api/raw-data/export/app/'
         match flag:
             case 'installs': 
                 url = (f'{self.base_url}{app_id}/installs_report/v5?timezone={self.timezone}&from={start_date}&to={end_date}'
@@ -57,7 +57,15 @@ class AppsFlyerConnect:
         csv_file_like_object = StringIO(response.text)
         df = pd.read_csv(csv_file_like_object, dtype={i: object for i in dtype})
         return df
-
+    
+    def get_skan(self, app_id):
+        self.base_url = 'https://hq1.appsflyer.com/api/skadnetworks/v3/data/app/'
+        url = self.base_url + app_id
+        response = requests.get(url, headers=self.headers)
+        print(response.text, response.status_code, sep='\n')
+        csv_file_like_object = StringIO(response.text)
+        df = pd.read_csv(csv_file_like_object)
+        return df
 
 # test=AppsFlyerConnect()
 # test.get_installs(app_id='id597405601')
@@ -148,7 +156,8 @@ class MintegralConnector:
         temp_end_date = end_date
         total = None
         for i in range((((datetime.strptime(end_date, "%Y-%m-%d") - datetime.strptime(start_date, "%Y-%m-%d")).days + 1) // 7) + 1):
-            start_date = (datetime.strptime(start_date, "%Y-%m-%d") + timedelta(i * 7)).strftime("%Y-%m-%d")
+            if i != 0:
+                start_date = (datetime.strptime(start_date, "%Y-%m-%d") + timedelta(7)).strftime("%Y-%m-%d")
             if (datetime.strptime(end_date, "%Y-%m-%d") - datetime.strptime(start_date, "%Y-%m-%d")).days > 7:
                 temp_end_date = (datetime.strptime(start_date, "%Y-%m-%d") + timedelta(6)).strftime("%Y-%m-%d")
             else:
@@ -156,7 +165,8 @@ class MintegralConnector:
             params["type"] = 1
             params['start_time'] = start_date
             params['end_time'] = temp_end_date
-            response = requests.get(url, params=params, headers=self.headers).json()
+            response = requests.get(url, params=params, headers=self.headers)
+            response = response.json()
             while True:
                 match response['code']:
                     case 400:
@@ -292,18 +302,14 @@ class AdjustConnect:
             token = f.readline()
         self.app_ids = app_ids
         self.headers = {
-            # "Authorization": "Bearer " + token
             "Authorization": f"Bearer {token}",
             "X-Account-ID": account_id
         }
         self.base_url = 'https://dash.adjust.com/control-center/reports-service/'
 
     def get_cohort_data(self, start_date:str, end_date:str,
-                        event_names=['lessy_03_discountcardview'], cohort='d0'):
-
-        # url=f'{self.base_url}stat/v1/data'
+                        event_names=None, cohort='d0'):
         url = self.base_url + 'csv_report'
-
         params = {
             'cost_mode': 'network',
             'app_token__in': ','.join([(value) for value in self.app_ids]),
@@ -317,23 +323,14 @@ class AdjustConnect:
             'sort': '-installs',
             'utc_offset': '+03:00',
         }
-        
         response = requests.get(url, params=params, headers=self.headers)
         data = response.text
-
-
-
         df = pd.read_csv(StringIO(data))
-
-        # df.to_excel('D:\\работа\\huntermob\\Yrealty\\test.xlsx')
+        logging.info('Данные из Adjust загружены')
         return df
 
-    def get_stats_data(self, start_date='2024-02-01', end_date='2024-02-27',
-                        event_names=['Zvonok_Novostroika_paid', 'Card_View_Paid_Newb_sell',]):
-
-        # url=f'{self.base_url}stat/v1/data'
+    def get_stats_data(self, start_date, end_date, event_names=None):
         url = self.base_url + 'csv_report'
-
         params = {
             'cost_mode': 'network',
             'app_token__in': ','.join([(value) for value in self.app_ids]),
@@ -342,7 +339,6 @@ class AdjustConnect:
             'cohort_maturity': 'immature',
             'dimensions': 'day,app_token,campaign_id_network,adgroup_id_network,creative_id_network',
             'metrics': 'installs,'+','.join([value+'_events' for value in event_names]),
-            # 'metrics': 'installs',
             'reattributed': 'all',
             'sandbox': 'false',
             'sort': '-installs',
@@ -350,12 +346,8 @@ class AdjustConnect:
         }
         response = requests.get(url, params=params, headers=self.headers)
         data = response.text
-
-
-
         df = pd.read_csv(StringIO(data))
-
-        # df.to_excel('D:\\работа\\huntermob\\Yrealty\\test.xlsx')
+        logging.info('Данные из Adjust загружены')
         return df
 
     def get(self):
@@ -445,7 +437,8 @@ class TiktokConnect:
                     "adgroup_name",
                     "ad_id",
                     "ad_name",
-                    "spend"
+                    "spend",
+                    "clicks"
                 ],
                 "start_date" : start_date ,
                 "end_date" : end_date , 
@@ -477,12 +470,15 @@ class TiktokConnect:
         self.df = self.df_final
         return self.df
 
-    def sample_table(self):
+    def sample_table(self, with_click=False):
         self.df = self.df.rename(columns={'currency':'Currency', 'ad_name':'Ad Name', 'ad_id':'Ad ID', 'campaign_id':'Campaign ID',
-        'adgroup_name':'Ad Group Name', 'spend':'Cost', 'adgroup_id':'Ad group ID', 'campaign_name':'Campaign name',
-        'stat_time_day':'Date'})
-        self.df = self.df[['Date', 'Ad Name', 'Ad ID', 'Ad Group Name', 'Ad group ID', 
-                'Campaign name', 'Campaign ID', 'Cost', 'Currency']]
+            'adgroup_name':'Ad Group Name', 'spend':'Cost', 'adgroup_id':'Ad group ID', 'campaign_name':'Campaign name',
+            'stat_time_day':'Date', 'clicks':'Click'})
+        columns = ['Date', 'Ad Name', 'Ad ID', 'Ad Group Name', 'Ad group ID', 
+                'Campaign name', 'Campaign ID', 'Cost', 'Currency']
+        if with_click:
+            columns.insert(-1, 'Click')
+        self.df = self.df[columns]
         self.df['Cost'] = self.df['Cost'].astype(float)
         self.df = self.df.loc[self.df['Cost'] > 0]
         return self.df
@@ -728,3 +724,37 @@ class PetalConnector:
             'is_abroad': True
         }
         request = requests.post(url, headers=header, params=params)
+
+
+class UnityConnector:
+
+    def __init__(self, token=os.path.join(os.getcwd(), 'token', 'unity_keys.txt')):
+        with open(token, "r", encoding='utf8') as f:
+            key = f.readline()[:-1]
+            secret = f.readline()[:-1]
+            organization = f.readline()
+        self.headers = {"Authorization": 'Basic ' + f'{key}:{secret}',
+                        # 'Content-Type': 'application/json'
+                        }
+        self.url=f'https://services.api.unity.com/advertise/stats/v2/organizations/{organization}/reports/acquisitions'
+
+    def get_report(self,end_date, start_date, metrics=None, breakdowns=None, campaign_id=None, apps=None):
+        if metrics is None:
+            metrics = 'views,installs,spend,ecpm,cpi,cvr'
+        if breakdowns is None:
+            breakdowns = 'campaign,creativePack,platform'
+        data = {
+            'start': start_date,
+            'end': end_date,
+            'metrics': metrics,
+            'breakdowns': breakdowns,
+            'scale': 'day',
+            'appIds': apps,
+            'campaignIds': campaign_id,
+            # 'count': 250000
+        }
+        response = requests.get(self.url, headers=self.headers, params=data)
+        csv_file_like_object = StringIO(response.text)
+
+        df = pd.read_csv(csv_file_like_object, low_memory=False)
+        return df
