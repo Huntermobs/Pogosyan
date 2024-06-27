@@ -297,7 +297,7 @@ class AppMetricaConnect:
 
 
 class AdjustConnect:
-    def __init__(self, token='token_adj.txt', account_id='742', app_ids=None):
+    def __init__(self, token=os.path.join(os.getcwd(), 'token', 'token_adj.txt'), account_id='742', app_ids=None):
         with open(token, "r", encoding='utf8') as f:
             token = f.readline()
         self.app_ids = app_ids
@@ -307,8 +307,9 @@ class AdjustConnect:
         }
         self.base_url = 'https://dash.adjust.com/control-center/reports-service/'
 
-    def get_cohort_data(self, start_date:str, end_date:str,
-                        event_names=None, cohort='d0'):
+    def get_cohort_data(self, start_date:str, end_date:str, metrics:str, dimensions:str=False):
+        if not dimensions:
+            dimensions = ['day','partner_name','adgroup','campaign','creative_id_network']
         url = self.base_url + 'csv_report'
         params = {
             'cost_mode': 'network',
@@ -316,8 +317,8 @@ class AdjustConnect:
             'date_period': f'{start_date}:{end_date}',
             'attribution_type': 'all',
             'cohort_maturity': 'immature',
-            'dimensions': 'day,partner_name,adgroup,campaign,creative_id_network',
-            'metrics': 'installs,'+','.join([value + ('_'+cohort+'_events_cohort') for value in event_names]),
+            'dimensions': ','.join(dimensions),
+            'metrics': ','.join(metrics),
             'reattributed': 'all',
             'sandbox': 'false',
             'sort': '-installs',
@@ -450,7 +451,6 @@ class TiktokConnect:
                 "Access-Token": self.access_token,
                 "Content-Type":"application/json"
             }
-
             response = requests.get(url, headers=headers, json=payload)
             self.df.append(response.json())
             self.df[co] = self.transform_data(self.df[co])
@@ -466,6 +466,7 @@ class TiktokConnect:
                     self.df_final = pd.concat([self.df[co], self.df_final])
             else:
                 self.df_final = self.df[co]
+            time.sleep(5)
         logging.info(f"Данные с TikTok успешно загружены ({self.df_final['stat_time_day'].max()})")
         self.df = self.df_final
         return self.df
@@ -664,13 +665,21 @@ class GoogleAnalyticsConnector:
     
 
 class PetalConnector:
+    '''
+    Перед началом использования данного коннектора, необходимо использовать переменную виртуального окружения "CLIENT_SECRET_PETAL"\n
+    Для этого воспользуйтесь командой "os.environ['CLIENT_SECRET_PETAL'] = СЕКРЕТНЫЙ_КОД" чтобы добавить важный для API параметр\n
+    Чтобы найти данные для параметра, необходимо перейти по ссылке: https://developer.huawei.com/consumer/en/console/service/AppService\n
+    Затем перейти во вкладку "API" - "Авторизационные данные на уровне проекта". В "Идентификаторы клиента OAuth 2.0" необходимо найти нужный ID клиента
+    после чего скопировать "Секрет" в параметр описанный выше.
+    '''
     def __init__(self) -> None:
-        self.base_url = 'https://oauth-login.cloud.huawei.com/oauth2/v2'
+        self.base_url = 'https://oauth-login.cloud.huawei.com/oauth2/v2/'
+        self.load_url = 'https://ads-drru.cloud.huawei.ru/openapi/v2/'
         self.client_id = '111142983'
         self.redirect_uri = 'https://huntermob.com/'
         
     def authorize_token(self):
-        url = self.base_url + '/authorize'
+        url = self.base_url + 'authorize'
         header = {
             'Content-Type': 'application/x-www-form-urlencoded'
         }
@@ -689,41 +698,98 @@ class PetalConnector:
             ])
         }
         request = requests.get(url, headers=header, params=params)
-        logging.warning('Для получения токена авторизации, необходимо перейти по ссылке и после авторизации скопировать код авторизации в адресной строке!\n' + request.request.url)
+        logging.warning(f'''\n
+                        Для получения токена авторизации, необходимо перейти по ссылке и после авторизации скопировать код авторизации в адресной строке!\n
+                        {request.request.url}\n
+                        Затем необходимо создать/вставить в файл "petal_token_auth.txt" (путь к файлу "ПУТЬ_К_ПРОЕКТУ/token/petal_token_auth.txt")\n
+                        данные полученные в адресной строке после "https://huntermob.com/?authorization_code="\n
+                        Вставить нужно ТОЛЬКО КОД БЕЗ ОСНОВНОЙ ССЫЛКИ!\n\n
+                        Пример:\n
+                        https://huntermob.com/?authorization_code=1234567...XYZ\n
+                        В файл нужно вставить только "1234567...XYZ"
+                        ''')
 
     def access_token(self):
-        with open(os.path.join(os.getcwd(), 'token', 'petal_token.txt')) as f:
+        with open(os.path.join(os.getcwd(), 'token', 'petal_token_auth.txt')) as f:
             auth = f.readline()
-        url = self.base_url + '/token?grant_type=authorization_code&code=' + auth
+        url = self.base_url + 'token?grant_type=authorization_code&code=' + auth
         header = {
             'Content-Type': 'application/x-www-form-urlencoded'
         }
         params = {
-            'client_id': self.client_id,   # Установите для этого параметра значение «офлайн» только в том случае, если необходимо вернуть токен обновления.
+            'client_id': self.client_id,
             'client_secret': os.environ['CLIENT_SECRET_PETAL'],
             'redirect_uri': 'https://huntermob.com/'
         }
         request = requests.get(url, headers=header, params=params)
         with open(os.path.join(os.getcwd(), 'token', 'petal_token.txt'), mode='w') as f:
             f.writelines((request.json()['access_token'], '\n', request.json()['refresh_token']))
+        logging.info('Ключ доступа успешно получен!')
 
-    def download_data(self, start_date, end_date):
-        url = 'https://ads-drru.cloud.huawei.ru/openapi/v2/reports/campaign/query'
-        with open(os.path.join(os.getcwd(), 'token', 'petal_token.txt')) as f:
+    def refresh_token(self):
+        with open(os.path.join(os.getcwd(), 'token', 'petal_token_refresh.txt')) as f:
+            refresh_token = f.readlines()[-1]
+        url = self.base_url + 'token'
+        params = {'grant_type':'refresh_token',
+                'client_id':'111142983',
+                'client_secret': os.environ['CLIENT_SECRET_PETAL'],
+                'refresh_token': refresh_token
+                }
+        header = {'Content-Type': 'application/x-www-form-urlencoded'}
+        request = requests.post(url, headers=header, params=params)
+        with open(os.path.join(os.getcwd(), 'token', 'petal_token_refresh.txt'), mode='w') as f:
+            f.writelines((request.json()['access_token'], '\n', refresh_token))
+        logging.info('Ключ доступа успешно обновлён!')
+
+    def download_data(self, start_date, end_date, important_columns:bool=True, creative:bool=False):
+        '''
+        Был добавлен параметр "creative", т.к. по какой-то причине, когда выгружаются данные по креативамто не все РК попадают в выгрузку. 
+        Параметр "important_columns" вернёт только важные колонки
+        '''
+        with open(os.path.join(os.getcwd(), 'token', 'petal_token_refresh.txt')) as f:
             token = f.readline()[:-1]
+        url = self.load_url + 'reports/campaign/query' if not creative else self.base_url + 'reports/creative/query'
         header = {
-            'Content-Type': 'application/x-www-form-urlencoded',
+            'Content-Type': 'application/json',
+            'Accept':'application/json',
             'Authorization':f'Bearer {token}'
         }
         params = {
-            'advertiser_id': '1387065344731920768',
             'time_granularity': 'STAT_TIME_GRANULARITY_DAILY',
-            'page_size': '10000',
-            'start_date': start_date,
-            'end_date': end_date,
+            'page_size': 10000,
             'is_abroad': True
         }
-        request = requests.post(url, headers=header, params=params)
+        df = None
+        for i in range((((datetime.strptime(end_date, "%Y-%m-%d") - datetime.strptime(start_date, "%Y-%m-%d")).days + 1) // 7) + 1):
+            if i != 0:
+                start_date = (datetime.strptime(start_date, "%Y-%m-%d") + timedelta(7)).strftime("%Y-%m-%d")
+            if (datetime.strptime(end_date, "%Y-%m-%d") - datetime.strptime(start_date, "%Y-%m-%d")).days > 7:
+                temp_end_date = (datetime.strptime(start_date, "%Y-%m-%d") + timedelta(6)).strftime("%Y-%m-%d")
+            else:
+                temp_end_date = end_date
+            params['start_date'] = start_date
+            params['end_date'] = temp_end_date
+            request = requests.post(url, headers=header, json=params)
+            if request.status_code == 401:
+                self.refresh_token()
+                request = requests.post(url, headers=header, json=params)
+            if df is None:
+                df = pd.DataFrame(request.json()['data']['list'])
+            else:
+                df = pd.concat([df, pd.DataFrame(request.json()['data']['list'])])
+            logging.info(f'Получены данные из Petal за {start_date}:{temp_end_date}')
+        df['stat_datetime'] = pd.to_datetime(df['stat_datetime'], format='%Y%m%d00')
+        if important_columns:
+            if creative:
+                df = df[['campaign_name', 'campaign_id', 'adgroup_name', 'adgroup_id', 'package_name', 'stat_datetime', 'show_count', 'click_count', 'cost', 'install_count']]
+                df.rename(columns={'campaign_name': 'Campaign name', 'campaign_id': 'Campaign ID', 'adgroup_name': 'Adgroup name', 
+                                   'adgroup_id': 'Adgroup ID', 'package_name': 'Package name', 'stat_datetime': 'Time', 'show_count': 'Impressions', 
+                                   'click_count': 'Clicks', 'cost': 'Cost', 'install_count': 'Downloads'}, inplace=True)
+            else:
+                df = df[['campaign_name', 'campaign_id', 'stat_datetime', 'show_count', 'click_count', 'cost', 'install_count']]
+                df.rename(columns={'campaign_name': 'Campaign name', 'campaign_id': 'Campaign ID', 'stat_datetime': 'Time', 
+                                   'show_count': 'Impressions', 'click_count': 'Clicks', 'cost': 'Cost', 'install_count': 'Downloads'}, inplace=True)
+        return df
 
 
 class UnityConnector:
@@ -757,4 +823,97 @@ class UnityConnector:
         csv_file_like_object = StringIO(response.text)
 
         df = pd.read_csv(csv_file_like_object, low_memory=False)
+        return df
+    
+
+class BigoConnector:
+    def __init__(self, token:str=os.path.join(os.getcwd(), 'token', 'Bigo_token')) -> None:
+        with open(token, "r", encoding="utf-8") as file:
+            data = json.load(file)
+        self.secret = data['secret']
+        self.client_id = data['clientId']
+        self.base_url = 'https://api.adsbigo.com/openapi'
+        self.token = token
+
+    def _refresh_token(self, refresh=False):
+        with open(self.token, "r", encoding="utf-8") as file:
+            data = json.load(file)
+            refresh_token = data['refreshToken']
+            if not refresh:
+                return data['accessToken']
+        url = 'https://api.adsbigo.com/oauth/token'
+        headers = {"Authorization": 'Basic ' + base64.b64encode(f'{self.client_id}:{self.secret}'.encode('utf-8')).decode('utf-8'),
+                   'Content-Type': 'application/x-www-form-urlencoded'
+                   }
+        params = {
+            "grant_type": 'refresh_token',
+            'refresh_token': refresh_token
+        }
+        request = requests.post(url, headers=headers,data=params)
+        with open('temp.txt', mode='w', encoding="utf-8") as f:
+            f.write(request.text)
+        if request.status_code == 200:
+            with open(self.token, mode='w', encoding="utf-8") as f:
+                if 'refresh_token' in request.json():
+                    data['refreshToken'] = request.json()['refresh_token']
+                data['accessToken'] = request.json()['access_token']
+                json.dump(data, f, indent=4)
+            return request.json()['access_token']
+
+    def get_report(self, advertiser_ids: list, start_date: str, end_date: str, metrics=None,
+                   dimensions=None) -> pd.DataFrame:
+        url = self.base_url + '/report/list'
+        access_token = self._refresh_token()
+        headers = {"Authorization": f'Bearer {access_token}',
+                   'Content-Type': 'application/json'
+                   }
+        if metrics is None:
+            metrics = ['click', 'impression', 'totalCost']
+        if dimensions is None:
+            dimensions = ['adId','campaignId','adsetId']
+        params = {
+            "advertiserId": advertiser_ids,
+            'startDate': start_date,
+            'endDate': end_date,
+            'indicators': metrics,
+            'breakDowns': dimensions,
+            'aggregateType': 2,
+            'timezone': 3.00,  # UTC +03:00
+            'pageNo': 1,
+            'pageSize': 100000,
+        }
+        response = requests.post(url, headers=headers, json=params)
+        if response.status_code == 401:
+            token = self._refresh_token(refresh=True)
+            headers['Authorization'] = f'Bearer {token}'
+            response = requests.post(url, headers=headers, json=params)
+        data=pd.DataFrame(response.json()['result']['list'])
+        for name in dimensions:
+            data[name]=data[name].astype(str)
+        if 'campaignId' in dimensions:
+            campaign_names=self._get_campaign_names(advertiser_ids=advertiser_ids)
+            data=pd.merge(data, campaign_names, left_on='campaignId', right_on="campaignId", how='left')
+        if 'totalCost' in data.columns:
+            data['totalCost']=data['totalCost']/100
+        data=data[[col for col in data.columns.tolist() if col not in metrics] + metrics]
+        return data
+
+    def _get_campaign_names(self,advertiser_ids: list):
+        url = self.base_url + '/campaign/list'
+        access_token = self._refresh_token()
+        headers = {"Authorization": f'Bearer {access_token}',
+                   'Content-Type': 'application/json'
+                   }
+        params = {
+
+            'pageNo': 1,
+            'pageSize': 100000,
+        }
+        df=pd.DataFrame(columns=['name','id'])
+        for advertiser_id in advertiser_ids:
+            headers['advertiser-id']=advertiser_id
+            response = requests.post(url, headers=headers, json=params)
+            data = pd.DataFrame(response.json()['result']['list'])
+            df=pd.concat([df,data[['name','id']]])
+        df.rename(columns={'id':'campaignId','name':'campaignName'},inplace=True)
         return df
