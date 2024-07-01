@@ -760,7 +760,7 @@ class PetalConnector:
             'is_abroad': True
         }
         df = None
-        for i in range((((datetime.strptime(end_date, "%Y-%m-%d") - datetime.strptime(start_date, "%Y-%m-%d")).days + 1) // 7) + 1):
+        for i in range((((datetime.strptime(end_date, "%Y-%m-%d") - datetime.strptime(start_date, "%Y-%m-%d")).days) // 7) + 1):
             if i != 0:
                 start_date = (datetime.strptime(start_date, "%Y-%m-%d") + timedelta(7)).strftime("%Y-%m-%d")
             if (datetime.strptime(end_date, "%Y-%m-%d") - datetime.strptime(start_date, "%Y-%m-%d")).days > 7:
