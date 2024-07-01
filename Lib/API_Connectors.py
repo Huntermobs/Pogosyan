@@ -772,6 +772,9 @@ class PetalConnector:
             request = requests.post(url, headers=header, json=params)
             if request.status_code == 401:
                 self.refresh_token()
+                with open(os.path.join(os.getcwd(), 'token', 'petal_token_refresh.txt')) as f:
+                    token = f.readline()[:-1]
+                header['Authorization'] = f'Bearer {token}'
                 request = requests.post(url, headers=header, json=params)
             if df is None:
                 df = pd.DataFrame(request.json()['data']['list'])
